@@ -1,0 +1,555 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Search, 
+  Save, 
+  Trash2, 
+  Calendar, 
+  Hash, 
+  FileText, 
+  Warehouse, 
+  DollarSign, 
+  Plus, 
+  AlertCircle,
+  CheckCircle2,
+  ChevronRight
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Notification, CDODivision, GNDivision, Program, OtherNursery, JournalPrice } from '../types';
+
+interface GNEntry {
+  id?: number;
+  gn_id: string;
+  quantity: string;
+  issued_quantity: string;
+  received_receipts: string;
+}
+
+interface ManageOrdersProps {
+  initialOrderNo?: string | null;
+}
+
+export default function ManageOrders({ initialOrderNo }: ManageOrdersProps) {
+  const [searchNo, setSearchNo] = useState(initialOrderNo || '');
+  const [originalNo, setOriginalNo] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  
+  const [orderData, setOrderData] = useState<any>(null);
+  const [gnEntries, setGnEntries] = useState<GNEntry[]>([]);
+  
+  const [cdoDivisions, setCdoDivisions] = useState<CDODivision[]>([]);
+  const [gnDivisions, setGnDivisions] = useState<GNDivision[]>([]);
+  const [programs, setPrograms] = useState<Program[]>([]);
+  const [otherNurseries, setOtherNurseries] = useState<OtherNursery[]>([]);
+  const [journalPrices, setJournalPrices] = useState<JournalPrice[]>([]);
+
+  useEffect(() => {
+    fetchSettings();
+    if (initialOrderNo) {
+      handleSearch(initialOrderNo);
+    }
+  }, [initialOrderNo]);
+
+  const fetchSettings = async () => {
+    try {
+      const [cdoRes, gnRes, progRes, otherRes, priceRes] = await Promise.all([
+        fetch('/api/cdo-divisions'),
+        fetch('/api/gn-divisions'),
+        fetch('/api/programs'),
+        fetch('/api/other-nurseries-list'),
+        fetch('/api/journal-prices')
+      ]);
+
+      setCdoDivisions(await cdoRes.json());
+      setGnDivisions(await gnRes.json());
+      setPrograms(await progRes.json());
+      setOtherNurseries(await otherRes.json());
+      setJournalPrices(await priceRes.json());
+    } catch (err) {
+      console.error('Failed to fetch settings');
+    }
+  };
+
+  const handleSearch = async (noToSearch?: string) => {
+    const term = noToSearch || searchNo;
+    if (!term) return;
+    
+    setSearching(true);
+    setError('');
+    setSuccess('');
+    setOrderData(null);
+    setGnEntries([]);
+
+    try {
+      const response = await fetch(`/api/notifications/${encodeURIComponent(term)}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (!data || data.length === 0) {
+          setError('No data found for this Issue Order number');
+          return;
+        }
+        const first = data[0];
+        setOriginalNo(first.notification_no);
+        setOrderData({
+          date: first.date,
+          notification_no: first.notification_no,
+          receipt_no: first.receipt_no,
+          seedling_type: first.seedling_type,
+          program_id: first.program_id.toString(),
+          cdo_id: first.cdo_id.toString(),
+          journal_price_id: first.journal_price_id.toString(),
+          nursery_name: first.nursery_name,
+          nursery_type: first.nursery_type
+        });
+        setGnEntries(data.map((n: any) => ({
+          id: n.id,
+          gn_id: n.gn_id.toString(),
+          quantity: n.quantity.toString(),
+          issued_quantity: n.issued_quantity.toString(),
+          received_receipts: n.received_receipts.toString()
+        })));
+      } else {
+        setError('Issue Order not found');
+      }
+    } catch (err) {
+      setError('Search failed');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderData || !originalNo) return;
+
+    if (gnEntries.some(entry => !entry.gn_id || !entry.quantity)) {
+      setError('Please fill all GN Division entries and quantities');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await fetch(`/api/notifications/by-no/${encodeURIComponent(originalNo)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...orderData,
+          program_id: parseInt(orderData.program_id),
+          cdo_id: parseInt(orderData.cdo_id),
+          journal_price_id: parseInt(orderData.journal_price_id),
+          gn_entries: gnEntries.map(entry => ({
+            gn_id: parseInt(entry.gn_id),
+            quantity: parseInt(entry.quantity),
+            issued_quantity: parseInt(entry.issued_quantity) || 0,
+            received_receipts: parseInt(entry.received_receipts) || 0
+          }))
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setSuccess('Issue Order updated successfully');
+        setOriginalNo(orderData.notification_no);
+        setSearchNo(orderData.notification_no);
+      } else {
+        setError(data.error || 'Failed to update order');
+      }
+    } catch (err) {
+      setError('Connection error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!orderData || !originalNo) {
+      setError('No order selected to delete');
+      return;
+    }
+    
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    setShowDeleteConfirm(false);
+
+    try {
+      console.log(`Frontend: Requesting delete for ${originalNo}`);
+      const response = await fetch(`/api/notifications/by-no/${encodeURIComponent(originalNo)}`, {
+        method: 'DELETE'
+      });
+
+      const data = await response.json();
+      console.log('Frontend: Delete response', data);
+
+      if (response.ok) {
+        setSuccess('Issue Order deleted successfully');
+        setOrderData(null);
+        setGnEntries([]);
+        setSearchNo('');
+        setOriginalNo('');
+      } else {
+        setError(data.error || 'Failed to delete order');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } catch (err) {
+      console.error('Frontend: Delete error', err);
+      setError('Connection error occurred while deleting');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addGNEntry = () => {
+    setGnEntries([...gnEntries, { gn_id: '', quantity: '', issued_quantity: '0', received_receipts: '0' }]);
+  };
+
+  const removeGNEntry = (index: number) => {
+    if (gnEntries.length > 1) {
+      setGnEntries(gnEntries.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateGNEntry = (index: number, field: keyof GNEntry, value: string) => {
+    const newEntries = [...gnEntries];
+    (newEntries[index] as any)[field] = value;
+    setGnEntries(newEntries);
+  };
+
+  const filteredGN = gnDivisions.filter(gn => gn.cdo_id === parseInt(orderData?.cdo_id || '0'));
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-8">
+      {/* Search Section */}
+      <div className="bg-white rounded-[32px] p-8 border border-slate-100 shadow-sm">
+        <div className="space-y-4">
+          <h3 className="text-xl font-bold text-slate-800">Manage Issue Orders</h3>
+          <p className="text-sm text-slate-500">Search by Issue Order Number to edit or delete</p>
+          
+          <div className="flex gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <input 
+                type="text"
+                placeholder="Enter Issue Order Number (e.g. ORD-2024-001)"
+                value={searchNo}
+                onChange={(e) => setSearchNo(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all font-bold"
+              />
+            </div>
+            <button 
+              onClick={handleSearch}
+              disabled={searching || !searchNo}
+              className="bg-slate-800 text-white px-8 rounded-2xl font-bold hover:bg-slate-700 transition-colors disabled:opacity-50"
+            >
+              {searching ? 'Searching...' : 'Search'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <AnimatePresence mode="wait">
+        {error && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="bg-red-50 border border-red-100 text-red-600 p-4 rounded-2xl text-sm font-medium flex items-center gap-2"
+          >
+            <AlertCircle size={18} />
+            {error}
+          </motion.div>
+        )}
+
+        {success && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="bg-emerald-50 border border-emerald-100 text-emerald-600 p-4 rounded-2xl text-sm font-medium flex items-center gap-2"
+          >
+            <CheckCircle2 size={18} />
+            {success}
+          </motion.div>
+        )}
+
+        {orderData && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden"
+          >
+            <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h4 className="text-lg font-bold text-slate-800">Edit Order Details</h4>
+                <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Nursery Type: {orderData.nursery_type}</p>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2 bg-red-50 p-1 rounded-xl border border-red-100">
+                    <span className="text-[10px] font-bold text-red-600 px-2 uppercase">Confirm Delete?</span>
+                    <button 
+                      onClick={handleDelete}
+                      disabled={loading}
+                      className="bg-red-600 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                    >
+                      {loading ? '...' : 'Yes, Delete'}
+                    </button>
+                    <button 
+                      onClick={() => setShowDeleteConfirm(false)}
+                      disabled={loading}
+                      className="bg-white text-slate-600 text-[10px] font-bold px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button 
+                    onClick={() => setShowDeleteConfirm(true)}
+                    disabled={loading}
+                    className="flex items-center gap-2 text-red-600 hover:text-red-700 font-bold text-sm bg-red-50 px-4 py-2 rounded-xl transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 size={16} />
+                    Delete Order
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <form onSubmit={handleUpdate} className="p-8 space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 ml-1">Date</label>
+                  <div className="relative">
+                    <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                      type="date" 
+                      required
+                      value={orderData.date}
+                      onChange={e => setOrderData({...orderData, date: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 ml-1">Issue Order No</label>
+                  <div className="relative">
+                    <Hash className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                      type="text" 
+                      required
+                      value={orderData.notification_no}
+                      onChange={e => setOrderData({...orderData, notification_no: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 ml-1">Receipt No</label>
+                  <div className="relative">
+                    <FileText className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                      type="text" 
+                      required
+                      value={orderData.receipt_no}
+                      onChange={e => setOrderData({...orderData, receipt_no: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 ml-1">Seedling Type</label>
+                  <select 
+                    required
+                    value={orderData.seedling_type}
+                    onChange={e => setOrderData({...orderData, seedling_type: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                  >
+                    <option value="Field">Field</option>
+                    <option value="Potted">Potted</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 ml-1">Journal Price</label>
+                  <div className="relative">
+                    <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <select 
+                      required
+                      value={orderData.journal_price_id}
+                      onChange={e => setOrderData({...orderData, journal_price_id: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all appearance-none"
+                    >
+                      <option value="">Select Price</option>
+                      {journalPrices.map(p => (
+                        <option key={p.id} value={p.id}>Rs. {p.price.toFixed(2)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 ml-1">Program</label>
+                  <select 
+                    required
+                    value={orderData.program_id}
+                    onChange={e => setOrderData({...orderData, program_id: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                  >
+                    <option value="">Select Program</option>
+                    {programs.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 ml-1">CDO Division</label>
+                  <select 
+                    required
+                    value={orderData.cdo_id}
+                    onChange={e => {
+                      setOrderData({...orderData, cdo_id: e.target.value});
+                      // Reset GN entries when CDO changes
+                      setGnEntries(gnEntries.map(entry => ({ ...entry, gn_id: '' })));
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                  >
+                    <option value="">Select CDO Division</option>
+                    {cdoDivisions.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 ml-1">Nursery</label>
+                  <div className="relative">
+                    <Warehouse className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <select 
+                      required
+                      value={orderData.nursery_name}
+                      onChange={e => setOrderData({...orderData, nursery_name: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all appearance-none"
+                    >
+                      <option value="">Select Nursery</option>
+                      {orderData.nursery_type === 'Other' ? (
+                        otherNurseries.map(n => (
+                          <option key={n.id} value={n.name}>{n.name}</option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="Walipitiya Nursery">Walipitiya Nursery</option>
+                          <option value="Hadpanagal Nursery">Hadpanagal Nursery</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-6 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wider">GN Division Quantities</h4>
+                  <button 
+                    type="button"
+                    onClick={addGNEntry}
+                    className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 hover:text-emerald-700"
+                  >
+                    <Plus size={14} />
+                    Add GN Division
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {gnEntries.map((entry, index) => (
+                    <div key={index} className="flex gap-4 items-end bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+                      <div className="flex-1 space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">GN Division</label>
+                        <select 
+                          required
+                          value={entry.gn_id}
+                          onChange={e => updateGNEntry(index, 'gn_id', e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                        >
+                          <option value="">Select GN Division</option>
+                          {filteredGN.map(g => (
+                            <option key={g.id} value={g.id.toString()}>{g.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="w-24 space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Quantity</label>
+                        <input 
+                          type="number" 
+                          required
+                          value={entry.quantity}
+                          onChange={e => updateGNEntry(index, 'quantity', e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                        />
+                      </div>
+                      <div className="w-24 space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Issued</label>
+                        <input 
+                          type="number" 
+                          required
+                          disabled={orderData.nursery_type === 'Main'}
+                          value={entry.issued_quantity}
+                          onChange={e => updateGNEntry(index, 'issued_quantity', e.target.value)}
+                          className={`w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all ${orderData.nursery_type === 'Main' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        />
+                      </div>
+                      <div className="w-24 space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Receipts</label>
+                        <input 
+                          type="number" 
+                          required
+                          value={entry.received_receipts}
+                          onChange={e => updateGNEntry(index, 'received_receipts', e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                        />
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => removeGNEntry(index)}
+                        disabled={gnEntries.length === 1}
+                        className="p-2.5 text-slate-400 hover:text-red-500 disabled:opacity-0 transition-colors"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-6 flex gap-4">
+                <button 
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 bg-emerald-600 text-white font-bold py-4 rounded-2xl hover:bg-emerald-700 shadow-lg shadow-emerald-100 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? 'Updating...' : (
+                    <>
+                      <Save size={20} />
+                      <span>Update Issue Order</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

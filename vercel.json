@@ -1,0 +1,101 @@
+-- Users Table
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  username TEXT UNIQUE,
+  password TEXT,
+  role TEXT, -- 'admin', 'nursery'
+  nursery_name TEXT -- NULL for admin
+);
+
+-- CDO Divisions Table
+CREATE TABLE cdo_divisions (
+  id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE
+);
+
+-- GN Divisions Table
+CREATE TABLE gn_divisions (
+  id SERIAL PRIMARY KEY,
+  name TEXT,
+  cdo_id INTEGER REFERENCES cdo_divisions(id) ON DELETE CASCADE
+);
+
+-- Programs Table
+CREATE TABLE programs (
+  id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE
+);
+
+-- Other Nurseries Table
+CREATE TABLE other_nurseries (
+  id SERIAL PRIMARY KEY,
+  name TEXT UNIQUE
+);
+
+-- Journal Prices Table
+CREATE TABLE journal_prices (
+  id SERIAL PRIMARY KEY,
+  price REAL UNIQUE
+);
+
+-- Cash Sales Prices Table
+CREATE TABLE cash_sales_prices (
+  id SERIAL PRIMARY KEY,
+  price REAL UNIQUE
+);
+
+-- Cash Sales Table
+CREATE TABLE cash_sales (
+  id SERIAL PRIMARY KEY,
+  nursery_name TEXT,
+  nursery_type TEXT, -- 'Main', 'Other'
+  cdo_id INTEGER REFERENCES cdo_divisions(id),
+  gn_id INTEGER REFERENCES gn_divisions(id),
+  month TEXT,
+  plant_type TEXT,
+  price_id INTEGER REFERENCES cash_sales_prices(id),
+  seedling_type TEXT, -- 'Field', 'Potted'
+  quantity INTEGER,
+  year TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Other Nursery Cash Sales Table
+CREATE TABLE other_nursery_cash_sales (
+  id SERIAL PRIMARY KEY,
+  other_nursery_id INTEGER REFERENCES other_nurseries(id),
+  cdo_id INTEGER REFERENCES cdo_divisions(id),
+  gn_id INTEGER REFERENCES gn_divisions(id),
+  month TEXT,
+  plant_type TEXT,
+  price_id INTEGER REFERENCES cash_sales_prices(id),
+  seedling_type TEXT,
+  quantity INTEGER,
+  year TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Notifications Table
+CREATE TABLE notifications (
+  id SERIAL PRIMARY KEY,
+  date TEXT,
+  notification_no TEXT,
+  receipt_no TEXT,
+  seedling_type TEXT, -- 'Field', 'Potted'
+  quantity INTEGER,
+  received_receipts INTEGER DEFAULT 0,
+  issued_quantity INTEGER DEFAULT 0,
+  program_id INTEGER REFERENCES programs(id),
+  cdo_id INTEGER REFERENCES cdo_divisions(id),
+  gn_id INTEGER REFERENCES gn_divisions(id),
+  journal_price_id INTEGER REFERENCES journal_prices(id),
+  nursery_type TEXT, -- 'Main', 'Other'
+  nursery_name TEXT -- 'Walipitiya', 'Hadpanagal' or Other Nursery Name
+);
+
+-- Seed initial users
+INSERT INTO users (username, password, role, nursery_name) VALUES 
+('admin', 'admin123', 'admin', null),
+('hadpanagal', 'nursery123', 'nursery', 'Hadpanagal Nursery'),
+('walipitiya', 'nursery123', 'nursery', 'Walipitiya Nursery')
+ON CONFLICT (username) DO NOTHING;

@@ -1,0 +1,384 @@
+import express from "express";
+import { createServer as createViteServer } from "vite";
+import path from "path";
+import { fileURLToPath } from "url";
+import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+async function startServer() {
+  const app = express();
+  app.use(express.json());
+
+  // Auth API
+  app.post("/api/login", async (req, res) => {
+    const { username, password } = req.body;
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", username)
+      .eq("password", password)
+      .single();
+
+    if (user) {
+      res.json({ success: true, user: { id: user.id, username: user.username, role: user.role, nursery_name: user.nursery_name } });
+    } else {
+      res.status(401).json({ success: false, message: "Invalid credentials" });
+    }
+  });
+
+  // Settings APIs
+  app.get("/api/cdo-divisions", async (req, res) => {
+    const { data, error } = await supabase.from("cdo_divisions").select("*");
+    res.json(data || []);
+  });
+
+  app.post("/api/cdo-divisions", async (req, res) => {
+    const { name } = req.body;
+    const { error } = await supabase.from("cdo_divisions").insert([{ name }]);
+    if (error) return res.status(400).json({ error: "Already exists or error" });
+    res.json({ success: true });
+  });
+
+  app.delete("/api/cdo-divisions/:id", async (req, res) => {
+    await supabase.from("cdo_divisions").delete().eq("id", req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/gn-divisions", async (req, res) => {
+    const { data, error } = await supabase
+      .from("gn_divisions")
+      .select("id, name, cdo_id, cdo_divisions(name)");
+    
+    const formattedData = data?.map((item: any) => ({
+      id: item.id,
+      name: item.name,
+      cdo_id: item.cdo_id,
+      cdo_name: item.cdo_divisions?.name
+    }));
+    
+    res.json(formattedData || []);
+  });
+
+  app.post("/api/gn-divisions", async (req, res) => {
+    const { name, cdo_id } = req.body;
+    await supabase.from("gn_divisions").insert([{ name, cdo_id }]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/gn-divisions/:id", async (req, res) => {
+    await supabase.from("gn_divisions").delete().eq("id", req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/programs", async (req, res) => {
+    const { data } = await supabase.from("programs").select("*");
+    res.json(data || []);
+  });
+
+  app.post("/api/programs", async (req, res) => {
+    const { name } = req.body;
+    await supabase.from("programs").insert([{ name }]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/programs/:id", async (req, res) => {
+    await supabase.from("programs").delete().eq("id", req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/other-nurseries-list", async (req, res) => {
+    const { data } = await supabase.from("other_nurseries").select("*");
+    res.json(data || []);
+  });
+
+  app.post("/api/other-nurseries-list", async (req, res) => {
+    const { name } = req.body;
+    await supabase.from("other_nurseries").insert([{ name }]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/other-nurseries-list/:id", async (req, res) => {
+    await supabase.from("other_nurseries").delete().eq("id", req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/journal-prices", async (req, res) => {
+    const { data } = await supabase.from("journal_prices").select("*");
+    res.json(data || []);
+  });
+
+  app.post("/api/journal-prices", async (req, res) => {
+    const { price } = req.body;
+    await supabase.from("journal_prices").insert([{ price }]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/journal-prices/:id", async (req, res) => {
+    await supabase.from("journal_prices").delete().eq("id", req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/cash-sales-prices", async (req, res) => {
+    const { data } = await supabase.from("cash_sales_prices").select("*");
+    res.json(data || []);
+  });
+
+  app.post("/api/cash-sales-prices", async (req, res) => {
+    const { price } = req.body;
+    await supabase.from("cash_sales_prices").insert([{ price }]);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/cash-sales-prices/:id", async (req, res) => {
+    await supabase.from("cash_sales_prices").delete().eq("id", req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/cash-sales", async (req, res) => {
+    const { nursery_name, year, nursery_type } = req.query;
+    let query = supabase
+      .from("cash_sales")
+      .select("*, cdo_divisions(name), gn_divisions(name), cash_sales_prices(price)");
+
+    if (nursery_name) query = query.eq("nursery_name", nursery_name);
+    if (year) query = query.eq("year", year);
+    if (nursery_type && nursery_type !== 'Total') query = query.eq("nursery_type", nursery_type);
+
+    const { data } = await query;
+    
+    const formattedData = data?.map((item: any) => ({
+      ...item,
+      cdo_name: item.cdo_divisions?.name,
+      gn_name: item.gn_divisions?.name,
+      price: item.cash_sales_prices?.price
+    }));
+
+    res.json(formattedData || []);
+  });
+
+  app.get("/api/other-nursery-cash-sales", async (req, res) => {
+    const { year } = req.query;
+    let query = supabase
+      .from("other_nursery_cash_sales")
+      .select("*, other_nurseries(name), cdo_divisions(name), gn_divisions(name), cash_sales_prices(price)");
+
+    if (year) query = query.eq("year", year);
+
+    const { data } = await query;
+    
+    const formattedData = data?.map((item: any) => ({
+      ...item,
+      nursery_name: item.other_nurseries?.name,
+      cdo_name: item.cdo_divisions?.name,
+      gn_name: item.gn_divisions?.name,
+      price: item.cash_sales_prices?.price
+    }));
+
+    res.json(formattedData || []);
+  });
+
+  app.post("/api/other-nursery-cash-sales", async (req, res) => {
+    const { other_nursery_id, cdo_id, gn_id, month, plant_type, price_id, seedling_type, quantity, year } = req.body;
+    const { error } = await supabase.from("other_nursery_cash_sales").insert([{
+      other_nursery_id, cdo_id, gn_id, month, plant_type, price_id, seedling_type, quantity, year
+    }]);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  });
+
+  app.post("/api/cash-sales", async (req, res) => {
+    const { nursery_name, nursery_type, cdo_id, gn_id, month, plant_type, price_id, seedling_type, quantity, year } = req.body;
+    const { error } = await supabase.from("cash_sales").insert([{
+      nursery_name, nursery_type, cdo_id, gn_id, month, plant_type, price_id, seedling_type, quantity, year
+    }]);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  });
+
+  app.delete("/api/cash-sales/:id", async (req, res) => {
+    await supabase.from("cash_sales").delete().eq("id", req.params.id);
+    res.json({ success: true });
+  });
+
+  // Notifications API
+  app.get("/api/notifications", async (req, res) => {
+    const { nursery_name, nursery_type, year } = req.query;
+    let query = supabase
+      .from("notifications")
+      .select("*, programs(name), cdo_divisions(name), gn_divisions(name), journal_prices(price)");
+
+    if (nursery_name) query = query.eq("nursery_name", nursery_name);
+    if (nursery_type) query = query.eq("nursery_type", nursery_type);
+    if (year) query = query.ilike("date", `${year}%`);
+
+    const { data } = await query;
+    
+    const formattedData = data?.map((item: any) => ({
+      ...item,
+      program_name: item.programs?.name,
+      cdo_name: item.cdo_divisions?.name,
+      gn_name: item.gn_divisions?.name,
+      journal_price: item.journal_prices?.price
+    }));
+
+    res.json(formattedData || []);
+  });
+
+  app.post("/api/notifications", async (req, res) => {
+    const { date, notification_no, receipt_no, seedling_type, gn_entries, program_id, cdo_id, journal_price_id, nursery_type, nursery_name } = req.body;
+    
+    if (nursery_type === 'Main') {
+      const { data: existing } = await supabase
+        .from("notifications")
+        .select("id")
+        .eq("notification_no", notification_no)
+        .eq("nursery_type", "Main")
+        .limit(1);
+      
+      if (existing && existing.length > 0) {
+        return res.status(400).json({ error: "Notification number already exists in Main Nursery" });
+      }
+    }
+
+    const entriesToInsert = gn_entries.map((entry: any) => ({
+      date, notification_no, receipt_no, seedling_type, 
+      quantity: entry.quantity, 
+      issued_quantity: entry.issued_quantity || 0, 
+      program_id, cdo_id, 
+      gn_id: entry.gn_id, 
+      journal_price_id, nursery_type, nursery_name
+    }));
+
+    const { error } = await supabase.from("notifications").insert(entriesToInsert);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  });
+
+  app.get("/api/notifications/:no", async (req, res) => {
+    const { nursery_type } = req.query;
+    let query = supabase
+      .from("notifications")
+      .select("*, programs(name), cdo_divisions(name), gn_divisions(name), journal_prices(price)")
+      .eq("notification_no", req.params.no);
+
+    if (nursery_type) query = query.eq("nursery_type", nursery_type);
+
+    const { data } = await query;
+    
+    if (data && data.length > 0) {
+      const formattedData = data.map((item: any) => ({
+        ...item,
+        program_name: item.programs?.name,
+        cdo_name: item.cdo_divisions?.name,
+        gn_name: item.gn_divisions?.name,
+        journal_price: item.journal_prices?.price
+      }));
+      res.json(formattedData);
+    } else {
+      res.status(404).json({ error: "Not found" });
+    }
+  });
+
+  app.patch("/api/notifications/:id/receipts", async (req, res) => {
+    const { received_receipts } = req.body;
+    
+    // Get current value first since Supabase doesn't support relative updates easily without RPC
+    const { data: current } = await supabase.from("notifications").select("received_receipts").eq("id", req.params.id).single();
+    if (current) {
+      await supabase.from("notifications").update({ 
+        received_receipts: (current.received_receipts || 0) + received_receipts 
+      }).eq("id", req.params.id);
+    }
+    res.json({ success: true });
+  });
+
+  app.patch("/api/notifications/:id/issue", async (req, res) => {
+    const { issued_quantity } = req.body;
+    const { data: current } = await supabase.from("notifications").select("issued_quantity").eq("id", req.params.id).single();
+    if (current) {
+      await supabase.from("notifications").update({ 
+        issued_quantity: (current.issued_quantity || 0) + issued_quantity 
+      }).eq("id", req.params.id);
+    }
+    res.json({ success: true });
+  });
+
+  app.delete("/api/notifications/by-no/:no", async (req, res) => {
+    const no = req.params.no;
+    const { data: notifications } = await supabase.from("notifications").select("issued_quantity").eq("notification_no", no);
+    
+    const totalIssued = notifications?.reduce((sum, n) => sum + (n.issued_quantity || 0), 0) || 0;
+
+    if (totalIssued > 0) {
+      return res.status(400).json({ error: "Nursery issued seedlings" });
+    }
+
+    await supabase.from("notifications").delete().eq("notification_no", no);
+    res.json({ success: true });
+  });
+
+  app.put("/api/notifications/by-no/:no", async (req, res) => {
+    const { date, notification_no, receipt_no, seedling_type, gn_entries, program_id, cdo_id, journal_price_id, nursery_type, nursery_name } = req.body;
+    const old_no = req.params.no;
+
+    if (notification_no !== old_no && nursery_type === 'Main') {
+      const { data: existing } = await supabase
+        .from("notifications")
+        .select("id")
+        .eq("notification_no", notification_no)
+        .eq("nursery_type", "Main")
+        .limit(1);
+      if (existing && existing.length > 0) {
+        return res.status(400).json({ error: "New notification number already exists in Main Nursery" });
+      }
+    }
+
+    // Delete old and insert new (Supabase doesn't have transactions in the JS client like SQLite, 
+    // but we can do it sequentially or use a stored procedure if needed. 
+    // For now, sequential is okay for this scale).
+    await supabase.from("notifications").delete().eq("notification_no", old_no);
+
+    const entriesToInsert = gn_entries.map((entry: any) => ({
+      date, notification_no, receipt_no, seedling_type, 
+      quantity: entry.quantity, 
+      issued_quantity: entry.issued_quantity || 0, 
+      received_receipts: entry.received_receipts || 0,
+      program_id, cdo_id, 
+      gn_id: entry.gn_id, 
+      journal_price_id, nursery_type, nursery_name
+    }));
+
+    await supabase.from("notifications").insert(entriesToInsert);
+    res.json({ success: true });
+  });
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    });
+  }
+
+  const PORT = 3000;
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
